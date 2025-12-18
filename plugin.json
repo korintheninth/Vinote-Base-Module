@@ -1,0 +1,21 @@
+{
+    "name": "base",
+    "version": "1.0.0",
+    "nodes": [
+        {
+            "typeId": "textNode",
+            "uiEntry": "dist/textNode.js",
+            "logicEntry": "dist/plugin.js"
+        },
+        {
+            "typeId": "functionNode",
+            "uiEntry": "dist/functionNode.js",
+            "logicEntry": "dist/plugin.js"
+        },
+        {
+            "typeId": "derivativeNode",
+            "uiEntry": "dist/DerivativeNode.js",
+            "logicEntry": "dist/plugin.js"
+        }
+    ]
+}
