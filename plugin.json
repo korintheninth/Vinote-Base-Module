@@ -16,6 +16,11 @@
             "typeId": "derivativeNode",
             "uiEntry": "dist/DerivativeNode.js",
             "logicEntry": "dist/plugin.js"
+        },
+        {
+            "typeId": "integralNode",
+            "uiEntry": "dist/IntegralNode.js",
+            "logicEntry": "dist/plugin.js"
         }
     ]
 }

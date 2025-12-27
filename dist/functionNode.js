@@ -47,6 +47,9 @@ class FunctionNodeUI extends HTMLElement {
 			this.exprValue = this.funcField.getPromptValue('expr');
 			this.outputs[0].changed(`f(${this.varValue}) = ${this.exprValue}`)
 		});
+		this.addEventListener("pointerdown", e => e.stopImmediatePropagation());
+		this.addEventListener("pointerup", e => e.stopImmediatePropagation());
+		this.addEventListener("click", e => e.stopPropagation());
 	}
 
 	focus() {

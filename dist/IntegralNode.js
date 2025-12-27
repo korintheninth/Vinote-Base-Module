@@ -26,15 +26,15 @@ if (nodeRequire) {
       }
     }
   } catch (error) {
-    console.error('[Derivative] Failed to read APIKEYS file:', error);
+    console.error('[Integral] Failed to read APIKEYS file:', error);
   }
 }
 
 if (!WOLFRAM_API_KEY) {
-  console.warn('[Derivative] WOLFRAM_API_KEY not found in APIKEYS file');
+  console.warn('[Integral] WOLFRAM_API_KEY not found in APIKEYS file');
 }
 
-class DerivativeNodeUI extends HTMLElement {
+class IntegralNodeUI extends HTMLElement {
 	constructor() {
 		super();
 		this.attachShadow({ mode: "open" });
@@ -49,18 +49,18 @@ class DerivativeNodeUI extends HTMLElement {
 					opacity: 0.5;
 				}
 			</style>
-			<math-field class="derivative" readonly></math-field>
+			<math-field class="integral" readonly></math-field>
 		`;
 
-		this.derivativeField = this.shadowRoot.querySelector('math-field');
-		this.derivativeField.value = '\\frac{d}{d\\placeholder[var]{x}}\\placeholder[expr]{} = \\placeholder[result]{}';
+		this.integralField = this.shadowRoot.querySelector('math-field');
+		this.integralField.value = '\\int_{\\placeholder[lower]{}}^{\\placeholder[upper]{}} \\placeholder[expr]{} d\\placeholder[var]{x} = \\placeholder[result]{}';
 		MathfieldElement.soundsDirectory = null;
 
 		this._ensurePlaceholderStyles = this._ensurePlaceholderStyles.bind(this);
 
 		customElements.whenDefined('math-field').then(() => {
 			this._ensurePlaceholderStyles();
-			this.derivativeField.addEventListener('focusin', this._ensurePlaceholderStyles);
+			this.integralField.addEventListener('focusin', this._ensurePlaceholderStyles);
 		});
 
 		this.inputs = [];
@@ -68,6 +68,8 @@ class DerivativeNodeUI extends HTMLElement {
 		
 		this._inputExpr = '';
 		this._inputVar = 'x';
+		this._inputLower = '';
+		this._inputUpper = '';
 		this._pendingRequest = null;
 		this._isComputing = false;
 		this._lastComputedKey = null;
@@ -77,15 +79,17 @@ class DerivativeNodeUI extends HTMLElement {
 	}
 
 	connectedCallback() {
-		this.derivativeField.addEventListener('mount', () => {
+		this.integralField.addEventListener('mount', () => {
 			this._removeToggleButtons();
 		});
 		requestAnimationFrame(() => this._removeToggleButtons());
 
-		this.derivativeField.addEventListener("input", () => {
-			this._inputVar = this.derivativeField.getPromptValue('var') || 'x';
-			this._inputExpr = this.derivativeField.getPromptValue('expr');
-			this._computeDerivative();
+		this.integralField.addEventListener("input", () => {
+			this._inputVar = this.integralField.getPromptValue('var') || 'x';
+			this._inputExpr = this.integralField.getPromptValue('expr');
+			this._inputLower = this.integralField.getPromptValue('lower') || '';
+			this._inputUpper = this.integralField.getPromptValue('upper') || '';
+			this._computeIntegral();
 		});
 		this.addEventListener("pointerdown", e => e.stopImmediatePropagation());
 		this.addEventListener("pointerup", e => e.stopImmediatePropagation());
@@ -93,38 +97,53 @@ class DerivativeNodeUI extends HTMLElement {
 	}
 
 	disconnectedCallback() {
-		this.derivativeField?.removeEventListener('focusin', this._ensurePlaceholderStyles);
+		this.integralField?.removeEventListener('focusin', this._ensurePlaceholderStyles);
 	}
 
 	inputChange(index, value) {
-		if (index === 0 && typeof value === 'string') {
-			const match = value.match(/^f\((\w+)\)\s*=\s*(.+)$/);
-			if (match) {
-				this._inputVar = match[1];
-				this._inputExpr = match[2];
-			} else {
-				this._inputVar = 'x';
-				this._inputExpr = value;
+		if (typeof value === 'string') {
+			if (index === 1) {
+				// Expression input
+				const match = value.match(/^f\((\w+)\)\s*=\s*(.+)$/);
+				if (match) {
+					this._inputVar = match[1];
+					this._inputExpr = match[2];
+				} else {
+					this._inputVar = 'x';
+					this._inputExpr = value;
+				}
+				
+				// Display in the math field
+				this.integralField.setPromptValue('var', this._inputVar, 'latex');
+				this.integralField.setPromptValue('expr', this._inputExpr, 'latex');
+			} else if (index === 2) {
+				// Lower bound input - extract right side of =, empty means no bound
+				const lowerMatch = value.match(/=\s*(.*)/);
+				const lower = lowerMatch ? lowerMatch[1].trim() : '';
+				this._inputLower = lower;
+				this.integralField.setPromptValue('lower', this._inputLower, 'latex');
+			} else if (index === 0) {
+				// Upper bound input - extract right side of =, empty means no bound
+				const upperMatch = value.match(/=\s*(.*)/);
+				const upper = upperMatch ? upperMatch[1].trim() : '';
+				this._inputUpper = upper;
+				this.integralField.setPromptValue('upper', this._inputUpper, 'latex');
 			}
-			
-			// Display in the math field
-			this.derivativeField.setPromptValue('var', this._inputVar, 'latex');
-			this.derivativeField.setPromptValue('expr', this._inputExpr, 'latex');
-			this._computeDerivative();
+			this._computeIntegral();
 		}
 	}
 
 	focus() {
-		this.derivativeField.focus();
-		this.derivativeField.selection = this.derivativeField.getPromptRange("expr");
+		this.integralField.focus();
+		this.integralField.selection = this.integralField.getPromptRange("expr");
 	}
 
-	_computeDerivative() {
+	_computeIntegral() {
 		// Debounce: wait 1 second after last input before computing
 		if (this._debounceTimer) {
 			clearTimeout(this._debounceTimer);
 		}
-		this._debounceTimer = setTimeout(() => this._doComputeDerivative(), this.debounceTimeMs);
+		this._debounceTimer = setTimeout(() => this._doComputeIntegral(), this.debounceTimeMs);
 	}
 
 	_isValidExpression(expr) {
@@ -141,10 +160,12 @@ class DerivativeNodeUI extends HTMLElement {
 		return true;
 	}
 
-	async _doComputeDerivative() {
+	async _doComputeIntegral() {
 		const expr = this._inputExpr;
 		const varName = this._inputVar;
-		const computeKey = `${varName}:${expr}`;
+		const lower = this._inputLower;
+		const upper = this._inputUpper;
+		const computeKey = `${varName}:${expr}:${lower}:${upper}`;
 		
 		// Don't recompute if already computing or same as last computed
 		if (this._isComputing) return;
@@ -180,11 +201,11 @@ class DerivativeNodeUI extends HTMLElement {
 		this._isComputing = true;
 		
 		// Show loading state
-		this.derivativeField.classList.add('loading');
+		this.integralField.classList.add('loading');
 		this._setResult('...');
 		
 		try {
-			const derivative = await this._fetchDerivativeFromWolfram(expr, varName);
+			const integral = await this._fetchIntegralFromWolfram(expr, varName, lower, upper);
 			
 			// Check if this request was cancelled
 			if (request.cancelled) {
@@ -195,13 +216,14 @@ class DerivativeNodeUI extends HTMLElement {
 			this._lastComputedKey = computeKey;
 			this._lastFailedKey = null;
 			
-			// Display the derivative in the result placeholder
-			this.derivativeField.classList.remove('loading');
-			this._setResult(derivative);
+			// Display the integral in the result placeholder
+			this.integralField.classList.remove('loading');
+			this._setResult(integral);
 			
-			// Output the derivative function
+			// Output the integral result (definite integral gives a value, indefinite gives a function)
 			if (this.outputs[0]) {
-				this.outputs[0].changed(`f(${varName}) = ${derivative}`);
+				const isDefinite = lower && upper;
+				this.outputs[0].changed(isDefinite ? integral : `f(${varName}) = ${integral}`);
 			}
 		} catch (error) {
 			if (request.cancelled) {
@@ -210,7 +232,7 @@ class DerivativeNodeUI extends HTMLElement {
 			}
 			
 			this._lastFailedKey = computeKey;
-			this.derivativeField.classList.remove('loading');
+			this.integralField.classList.remove('loading');
 			// Just show ? on error - don't use \text{} which can break formatting
 			this._setResult('?');
 			if (this.outputs[0]) {
@@ -224,26 +246,31 @@ class DerivativeNodeUI extends HTMLElement {
 
 	_setResult(value) {
 		// Save current cursor position to prevent it from moving to the result
-		const savedSelection = this.derivativeField.selection;
-		this.derivativeField.setPromptValue('result', value, 'latex');
+		const savedSelection = this.integralField.selection;
+		this.integralField.setPromptValue('result', value, 'latex');
 		// Restore cursor position after setting the result
 		if (savedSelection) {
-			this.derivativeField.selection = savedSelection;
+			this.integralField.selection = savedSelection;
 		}
 	}
 
 	_sanitizeForWolfram(str) {
 		// Remove invisible Unicode characters that MathLive inserts:
-		// U+2061 (FUNCTION APPLICATION), U+2062 (INVISIBLE TIMES),
+		// U+2062 (INVISIBLE TIMES), U+2061 (FUNCTION APPLICATION), 
 		// U+2063 (INVISIBLE SEPARATOR), U+2064 (INVISIBLE PLUS)
 		return str.replace(/[\u2061\u2062\u2063\u2064]/g, '');
 	}
 
-	async _fetchDerivativeFromWolfram(expr, varName) {
-		// Sanitize expression to remove invisible Unicode characters
+	async _fetchIntegralFromWolfram(expr, varName, lower, upper) {
+		// Sanitize all inputs to remove invisible Unicode characters
 		expr = this._sanitizeForWolfram(expr);
+		lower = this._sanitizeForWolfram(lower);
+		upper = this._sanitizeForWolfram(upper);
 		
-		const query = `\\frac{d}{d${varName}} \\left( ${expr} \\right)`;
+		const isDefinite = lower && upper;
+		const query = isDefinite
+			? `\\int_{${lower}}^{${upper}} \\left( ${expr} \\right) d${varName}`
+			: `\\int \\left( ${expr} \\right) d${varName}`;
 		const url = `https://api.wolframalpha.com/v2/query?appid=${WOLFRAM_API_KEY}&input=${encodeURIComponent(query)}&format=mathml&output=JSON`;
 		
 		const response = await fetch(url);
@@ -252,7 +279,7 @@ class DerivativeNodeUI extends HTMLElement {
 		const responseText = await response.text();
 		
 		if (!response.ok) {
-			console.error('[Derivative] API error:', response.status, responseText);
+			console.error('[Integral] API error:', response.status, responseText);
 			throw new Error(`Wolfram API error: ${response.status}`);
 		}
 		
@@ -260,46 +287,62 @@ class DerivativeNodeUI extends HTMLElement {
 		try {
 			data = JSON.parse(responseText);
 		} catch (jsonError) {
-			console.error('[Derivative] Failed to parse JSON:', responseText);
+			console.error('[Integral] Failed to parse JSON:', responseText);
 			throw new Error('Failed to parse Wolfram response as JSON');
 		}
 		
 		if (data.queryresult && data.queryresult.success) {
-			// Look for the derivative result in pods
+			// Look for the integral result in pods
 			const pods = data.queryresult.pods || [];
 			
-			// Try to find the "Derivative" or "Result" pod
-			for (const pod of pods) {
-				if (pod.id === 'Derivative' || pod.id === 'Result' || pod.title === 'Derivative') {
-					const subpods = pod.subpods || [];
-				if (subpods.length > 0 && subpods[0].mathml) {
-					let resultml = subpods[0].mathml;
-					let result = mathml2latex.convert(resultml);
-					// Clean up the result - extract just the derivative expression
-					result = result.replace(/[\s\S]*=\s*/, '') || result;
-					return result;
-				}
+			// Try to find the appropriate pod based on integral type (in priority order)
+			const podIds = isDefinite
+				? ['DefiniteIntegral', 'Result', 'Definite integral']
+				: ['IndefiniteIntegral', 'AlternateFormOfTheIntegral', 'LogExpand', 'Result', 'Indefinite integral'];
+			
+			// Search pods in priority order
+			for (const targetId of podIds) {
+				for (const pod of pods) {
+					if (pod.id === targetId || pod.title === targetId) {
+						const subpods = pod.subpods || [];
+						if (subpods.length > 0 && subpods[0].mathml) {
+							let resultml = subpods[0].mathml;
+							let result = mathml2latex.convert(resultml);
+							// Clean up the result - extract just the integral expression
+							// Remove patterns like "∫ f(x) dx = " or "f(x) = " or just "= "
+							result = result.replace(/[\s\S]*=\s*/, '') || result;
+							// Remove "(assuming a complex-valued logarithm)" or similar assumptions
+							result = result.replace(/\s*\(assuming[^)]+\)/gi, '');
+							// Convert "constant" to "c" (handle various formats) - only for indefinite
+							if (!isDefinite) {
+								result = result.replace(/\bconstant\b/gi, 'c');
+							}
+							// Trim any leading/trailing whitespace
+							result = result.trim();
+							return result;
+						}
+					}
 				}
 			}
 			
-			// No derivative found in pods
-			console.warn('[Derivative] No derivative found in response!');
-			console.warn('[Derivative] Original expression:', expr);
-			console.warn('[Derivative] Query sent:', query);
-			console.warn('[Derivative] Pods:', pods.map(p => ({ id: p.id, title: p.title, plaintext: p.subpods?.[0]?.plaintext })));
+			// No integral found in pods
+			console.warn('[Integral] No integral found in response!');
+			console.warn('[Integral] Original expression:', expr);
+			console.warn('[Integral] Query sent:', query);
+			console.warn('[Integral] Full response:', JSON.stringify(data.queryresult, null, 2));
 		} else {
 			// Query failed - log full response for debugging
-			console.warn('[Derivative] Query failed!');
-			console.warn('[Derivative] Original expression:', expr);
-			console.warn('[Derivative] Query sent:', query);
-			console.warn('[Derivative] Full response:', JSON.stringify(data.queryresult, null, 2));
+			console.warn('[Integral] Query failed!');
+			console.warn('[Integral] Original expression:', expr);
+			console.warn('[Integral] Query sent:', query);
+			console.warn('[Integral] Full response:', JSON.stringify(data.queryresult, null, 2));
 		}
 		
-		throw new Error('Could not compute derivative');
+		throw new Error('Could not compute integral');
 	}
 
 	_ensurePlaceholderStyles() {
-		const field = this.derivativeField;
+		const field = this.integralField;
 		if (!field) return;
 		const root = field.shadowRoot;
 		if (!root) {
@@ -323,7 +366,7 @@ class DerivativeNodeUI extends HTMLElement {
 	}
 
 	_removeToggleButtons() {
-		const root = this.derivativeField.shadowRoot || this.derivativeField;
+		const root = this.integralField.shadowRoot || this.integralField;
 		const vk = root.querySelector('.ML__virtual-keyboard-toggle');
 		if (vk) vk.remove();
 		const mt = root.querySelector('.ML__menu-toggle');
@@ -331,5 +374,5 @@ class DerivativeNodeUI extends HTMLElement {
 	}
 }
 
-customElements.define("derivative-node", DerivativeNodeUI);
+customElements.define("integral-node", IntegralNodeUI);
 

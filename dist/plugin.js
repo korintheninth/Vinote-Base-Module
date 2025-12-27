@@ -2,8 +2,8 @@ export const nodeTypes = [
 	{
 		typeId: "textNode",
 		label: "Text Node",
-		inputs: ["text"],
-		outputs: ["text"],
+		inputs: ["any"],
+		outputs: ["any"],
 		logic: {
 		},
 		uiComponentTag: "text-node"
@@ -26,6 +26,15 @@ export const nodeTypes = [
 		logic: {
 		},
 		uiComponentTag: "derivative-node"
+	},
+	{
+		typeId: "integralNode",
+		label: "Integral Node",
+		inputs: ["function", "function", "function"],
+		outputs: ["function"],
+		logic: {
+		},
+		uiComponentTag: "integral-node"
 	}
 ];
 
